@@ -25,6 +25,11 @@ drop package", 2024-08-29), which is byte-for-byte identical to
 git blob-hash comparisons against the upstream repository). Every
 commit on top of that import documents one self-contained change.
 
+The hardened controller — the path whitelist, filename sanitization,
+upload size limiting and the nixio-based file operations — is a rework
+of the architecture proven in
+[kenzok78/luci-app-fileassistant](https://github.com/kenzok78/luci-app-fileassistant).
+
 ## Changes for the apk era
 
 - packages are installed with `apk add` instead of `opkg`; only `.apk`
@@ -33,9 +38,11 @@ commit on top of that import documents one self-contained change.
   claiming success
 - paths carrying shell metacharacters are rejected before anything is
   executed
-- two latent Lua bugs fixed: an invalid `"\\ "` escape that silently
-  disabled space escaping (and breaks Lua 5.3+ parsers), and an
-  assignment to a read-only `for` loop variable
+- two latent Lua bugs fixed: a `"\ "` escape that Lua silently reads
+  as a plain space, so the intended shell space-escaping never happened,
+  and an assignment to a generic-`for` control variable, which Lua 5.5
+  rejects outright; both are gone now that no shell strings are built
+  and the listing is assembled by hand
 - the legacy `rm -rf /tmp/luci-*` cache cleanup after installation was
   dropped: the package's own postinst clears the LuCI caches and
   reloads rpcd, and the menu cache self-heals across upgrades anyway
@@ -60,7 +67,7 @@ ln -s /path/to/repo/luci-app-fileassistant package/luci-app-fileassistant
 echo 'CONFIG_PACKAGE_luci-app-fileassistant=m' >> .config
 make defconfig
 make package/luci-app-fileassistant/compile -j$(nproc) V=s
-# result: bin/packages/<arch>/luci/luci-app-fileassistant-1.0-r4.apk
+# result: bin/packages/<arch>/base/luci-app-fileassistant-1.0-r3.apk
 ```
 
 Snapshot SDKs sign every package they build with the key pair they
@@ -100,7 +107,7 @@ package and the matching `public-key.pem` are already on the router
 ### Quick test — no key setup
 
 ```bash
-apk add --allow-untrusted /tmp/luci-app-fileassistant-1.0-r4.apk
+apk add --allow-untrusted /tmp/luci-app-fileassistant-1.0-r3.apk
 ```
 
 Skips signature verification entirely. Fine for a throwaway VM or a
@@ -112,7 +119,7 @@ one-off experiment; do not make a habit of it on a production router.
 # once per router:
 cp /tmp/public-key.pem /etc/apk/keys/fileassistant-build.pem
 # every install or upgrade:
-apk add /tmp/luci-app-fileassistant-1.0-r4.apk
+apk add /tmp/luci-app-fileassistant-1.0-r3.apk
 ```
 
 With the public key in place the signature verifies normally — no
@@ -124,7 +131,7 @@ For offline or batch installs, build a proper little repository on the
 machine that holds the signing key:
 
 ```bash
-mkdir repo && cp luci-app-fileassistant-1.0-r4.apk repo/
+mkdir repo && cp luci-app-fileassistant-1.0-r3.apk repo/
 apk mkndx --sign private-key.pem --output repo/packages.adb repo/*.apk
 # copy repo/ to the router, then:
 apk add --repository /mnt/repo/packages.adb luci-app-fileassistant
@@ -141,7 +148,7 @@ verify; only use it knowingly.
 
 ```bash
 mkdir /tmp/keys && cp /tmp/public-key.pem /tmp/keys/
-apk --keys-dir /tmp/keys add /tmp/luci-app-fileassistant-1.0-r4.apk
+apk --keys-dir /tmp/keys add /tmp/luci-app-fileassistant-1.0-r3.apk
 ```
 
 `--keys-dir` replaces (not extends) the trusted key set for this one
@@ -159,10 +166,10 @@ files over — that pairs naturally with the recommended install path
 above.
 
 ```bash
-curl -L -o /tmp/luci-app-fileassistant-1.0-r4.apk \\
-  https://github.com/nxkaxtimq/luci-app-fileassistant/releases/download/v1.0-r4/luci-app-fileassistant-1.0-r4.apk
+curl -L -o /tmp/luci-app-fileassistant-1.0-r3.apk \\
+  https://github.com/nxkaxtimq/luci-app-fileassistant/releases/download/v1.0-r3/luci-app-fileassistant-1.0-r3.apk
 curl -L -o /tmp/public-key.pem \\
-  https://github.com/nxkaxtimq/luci-app-fileassistant/releases/download/v1.0-r4/public-key.pem
+  https://github.com/nxkaxtimq/luci-app-fileassistant/releases/download/v1.0-r3/public-key.pem
 ```
 
 ## How the app installs packages

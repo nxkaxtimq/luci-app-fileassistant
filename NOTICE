@@ -7,3 +7,5 @@ Contains code from:
 coxpcall	- Copyright 2005 - Kepler Project (www.keplerproject.org)
 ltn12/luasocket - Copyright 2004-2007 Diego Nehab
 axTLS		- Copyright 2008 Cameron Rich
+luci-app-fileassistant - hardening architecture by kenzok78
+(https://github.com/kenzok78/luci-app-fileassistant)
