@@ -28,6 +28,9 @@ String.prototype.replaceAll = function(search, replacement) {
           if (res.ec === 0) {
             refresh_list(res.data, currentPath);
           }
+          else {
+            alert('删除失败：' + (res.error || '未知错误'));
+          }
       });
     }
   }
@@ -94,6 +97,9 @@ String.prototype.replaceAll = function(search, replacement) {
             if (res.ec === 0) {
               refresh_list(res.data, currentPath);
             }
+            else {
+              alert('重命名失败：' + (res.error || '未知错误'));
+            }
           }
         );
       }
@@ -114,6 +120,10 @@ String.prototype.replaceAll = function(search, replacement) {
     else if (elem.parentNode.className.indexOf('-icon') > -1) {
       return elem.parentNode;
     }
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   function concatPath(path, filename) {
@@ -193,11 +203,11 @@ String.prototype.replaceAll = function(search, replacement) {
           }
 		  
           listHtml += '<tr class="cbi-section-table-row cbi-rowstyle-' + (1 + i%2)
-            + '" data-filename="' + o.filename + '" data-isdir="' + Number(f[1][0] === 'd' || f[1][0] === 'z') + '"'
-            + ((f[1][0] === 'z' || f[1][0] === 'l') ? (' data-linktarget="' + f[9].split(' -> ')[1]) : '')
+            + '" data-filename="' + esc(o.filename) + '" data-isdir="' + Number(f[1][0] === 'd' || f[1][0] === 'z') + '"'
+            + ((f[1][0] === 'z' || f[1][0] === 'l') ? (' data-linktarget="' + esc(f[9].split(' -> ')[1])) : '')
             + '">'
             + '<td class="cbi-value-field ' + o.icon + '">'
-            +   '<strong>' + o.displayname + '</strong>'
+            +   '<strong>' + esc(o.displayname) + '</strong>'
             + '</td>'
             + '<td class="cbi-value-field cbi-value-owner">'+o.owner+'</td>'
             + '<td class="cbi-value-field cbi-value-date">'+o.date+'</td>'
@@ -268,8 +278,13 @@ String.prototype.replaceAll = function(search, replacement) {
       xhr.onload = function() {
         if (xhr.status == 200) {
           var res = JSON.parse(xhr.responseText);
-          refresh_list(res.data, currentPath);
-          uploadinput.value = '';
+          if (res.ec === 0) {
+            refresh_list(res.data, currentPath);
+            uploadinput.value = '';
+          }
+          else {
+            alert('上传失败：' + (res.error || '未知错误'));
+          }
         }
         else {
           alert('上传失败，请稍后再试。');
@@ -280,14 +295,14 @@ String.prototype.replaceAll = function(search, replacement) {
   };
 
   document.addEventListener('DOMContentLoaded', function(evt) {
-    var initPath = '/';
+    var initPath = '/tmp';
     if (/path=([/\w]+)/.test(location.search)) {
       initPath = RegExp.$1;
     }
     update_list(initPath, {popState: true});
   });
   window.addEventListener('popstate', function (evt) {
-    var path = '/';
+    var path = '/tmp';
     if (evt.state && evt.state.path) {
       path = evt.state.path;
     }

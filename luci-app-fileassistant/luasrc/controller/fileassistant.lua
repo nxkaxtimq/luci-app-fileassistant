@@ -11,6 +11,7 @@ local ALLOWED_PATHS = {
 }
 
 local MAX_UPLOAD_SIZE = 500 * 1024 * 1024
+local DEFAULT_PATH = "/tmp"
 
 function index()
     if not nixio.fs.access("/usr/share/luci/menu.d/luci-app-fileassistant.json") then
@@ -49,10 +50,16 @@ function is_path_allowed(path)
     end
     local realpath = nixio.fs.realpath(path)
     if not realpath then
-        return false
+        local dirname = nixio.fs.dirname(path)
+        local basename = nixio.fs.basename(path)
+        local dir_real = dirname and nixio.fs.realpath(dirname) or nil
+        if not dir_real or basename == "" or basename == "." or basename == ".." then
+            return false
+        end
+        realpath = dir_real .. "/" .. basename
     end
     for _, allowed in ipairs(ALLOWED_PATHS) do
-        if realpath:find("^" .. allowed) or realpath == allowed then
+        if realpath == allowed or realpath:sub(1, #allowed + 1) == allowed .. "/" then
             return true, realpath
         end
     end
@@ -82,7 +89,7 @@ function sanitize_filename(name)
 end
 
 function fileassistant_list()
-    local path = sanitize_path(luci.http.formvalue("path")) or "/"
+    local path = sanitize_path(luci.http.formvalue("path")) or DEFAULT_PATH
     local allowed, realpath = is_path_allowed(path)
     if not allowed then
         list_response(path, false, "路径不在允许范围内")
@@ -96,14 +103,14 @@ function fileassistant_list()
 end
 
 function fileassistant_open()
-    local path = sanitize_path(luci.http.formvalue("path")) or "/"
+    local path = sanitize_path(luci.http.formvalue("path")) or DEFAULT_PATH
     local filename = luci.http.formvalue("filename") or ""
     local allowed, realpath = is_path_allowed(path)
     if not allowed then
         luci.http.status(403, "Forbidden")
         return
     end
-    if filename:match("[\\/]") then
+    if filename:match("[%z\1-\31\"\\/]") then
         luci.http.status(400, "Invalid filename")
         return
     end
@@ -120,8 +127,12 @@ function fileassistant_open()
     end
     luci.http.header('Content-Disposition', 'inline; filename="' .. filename .. '"')
     luci.http.prepare_content(mime)
-    luci.ltn12.pump.all(luci.ltn12.source.file(fp), luci.http.write)
-    fp:close()
+    luci.ltn12.pump.all(luci.ltn12.source.file(fp), function(chunk)
+        if chunk then
+            return luci.http.write(chunk)
+        end
+        return true
+    end)
 end
 
 function rmtree(path)
@@ -130,7 +141,7 @@ function rmtree(path)
         for entry in handle do
             if entry ~= "." and entry ~= ".." then
                 local subpath = path .. "/" .. entry
-                if nixio.fs.stat(subpath, "type") == "dir" then
+                if nixio.fs.lstat(subpath, "type") == "dir" then
                     if not rmtree(subpath) then
                         return false
                     end
@@ -141,7 +152,6 @@ function rmtree(path)
                 end
             end
         end
-        handle:close()
     end
     return nixio.fs.rmdir(path)
 end
@@ -158,6 +168,11 @@ function fileassistant_delete()
         list_response(path, false, "路径不在允许范围内")
         return
     end
+    if nixio.fs.lstat(path, "type") == "lnk" then
+        local success = nixio.fs.unlink(path)
+        list_response(nixio.fs.dirname(realpath), success, success and nil or "删除链接失败")
+        return
+    end
     local success, err
     if isdir == "1" then
         if nixio.fs.stat(realpath, "type") == "dir" then
@@ -169,6 +184,7 @@ function fileassistant_delete()
     else
         if nixio.fs.stat(realpath, "type") == "reg" then
             success = nixio.fs.unlink(realpath)
+            err = success and nil or "删除文件失败"
         else
             success = false
             err = "不是常规文件"
@@ -195,7 +211,7 @@ function fileassistant_rename()
         return
     end
     local success = nixio.fs.rename(old_realpath, new_realpath)
-    list_response(nixio.fs.dirname(old_realpath), success)
+    list_response(nixio.fs.dirname(old_realpath), success, success and nil or "重命名失败")
 end
 
 local function ensure_apk_cache()
@@ -227,7 +243,7 @@ function fileassistant_install()
         list_response(realpath, false, "文件不存在")
         return
     end
-    if realpath:match('["`') or realpath:match("[%z\1-\31]") then
+    if realpath:match('["`$&;|<>]') or realpath:match("[%z\1-\31]") then
         list_response(realpath, false, "路径包含不支持的字符")
         return
     end
@@ -261,7 +277,7 @@ function fileassistant_install_untrusted()
         list_response(realpath, false, "文件不存在")
         return
     end
-    if realpath:match('["`') or realpath:match("[%z\1-\31]") then
+    if realpath:match('["`$&;|<>]') or realpath:match("[%z\1-\31]") then
         list_response(realpath, false, "路径包含不支持的字符")
         return
     end
@@ -271,46 +287,69 @@ function fileassistant_install_untrusted()
 end
 
 function fileassistant_upload()
-    local uploaddir = sanitize_path(luci.http.formvalue("upload-dir")) or "/"
-    local allowed, realpath = is_path_allowed(uploaddir)
-    if not allowed then
-        list_response(uploaddir, false, "路径不在允许范围内")
+    local tmpname = "/tmp/.fileassistant-upload." .. nixio.getpid()
+    local meta_file
+    local received = 0
+    local overflow = false
+    local writeerr = false
+    local fp = io.open(tmpname, "w")
+    if not fp then
+        list_response("/tmp", false, "无法创建临时文件")
         return
     end
-    if not nixio.fs.stat(realpath) or nixio.fs.stat(realpath, "type") ~= "dir" then
+    luci.http.setfilehandler(function(meta, chunk, eof)
+        if meta and meta.name == "upload-file" and meta.file then
+            meta_file = meta.file
+        end
+        if chunk then
+            received = received + #chunk
+            if received > MAX_UPLOAD_SIZE then
+                overflow = true
+            end
+        end
+        if chunk and not overflow and fp then
+            if not fp:write(chunk) then
+                writeerr = true
+            end
+        end
+        if eof and fp then
+            fp:close()
+            fp = nil
+        end
+    end)
+    local uploaddir = sanitize_path(luci.http.formvalue("upload-dir")) or "/"
+    local allowed, realpath = is_path_allowed(uploaddir)
+    if not allowed or not realpath or nixio.fs.stat(realpath, "type") ~= "dir" then
+        if fp then fp:close() end
+        nixio.fs.unlink(tmpname)
         list_response(uploaddir, false, "目录无效")
         return
     end
-    local filename
-    local filepath
-    local uploaded_size = 0
-    local fp
-    luci.http.setfilehandler(function(meta, chunk, eof)
-        if not fp and meta and meta.name == "upload-file" then
-            filename = sanitize_filename(meta.file)
-            if not filename then
-                return
-            end
-            filepath = realpath .. "/" .. filename
-            fp = io.open(filepath, "w")
-            if not fp then
-                return
-            end
-        end
-        if fp and chunk then
-            uploaded_size = uploaded_size + #chunk
-            if uploaded_size > MAX_UPLOAD_SIZE then
-                fp:close()
-                fp = nil
-                nixio.fs.unlink(filepath)
-                return
-            end
-            fp:write(chunk)
-        end
-        if fp and eof then
-            fp:close()
-        end
-    end)
+    local filename = sanitize_filename(meta_file)
+    if not filename then
+        if fp then fp:close() end
+        nixio.fs.unlink(tmpname)
+        list_response(uploaddir, false, "未选择有效的上传文件")
+        return
+    end
+    if overflow then
+        if fp then fp:close() end
+        nixio.fs.unlink(tmpname)
+        list_response(uploaddir, false, "文件超出大小限制")
+        return
+    end
+    if writeerr then
+        if fp then fp:close() end
+        nixio.fs.unlink(tmpname)
+        list_response(uploaddir, false, "写入失败")
+        return
+    end
+    local ok = nixio.fs.rename(tmpname, realpath .. "/" .. filename)
+    if not ok then
+        nixio.fs.unlink(tmpname)
+        list_response(uploaddir, false, "无法保存上传的文件")
+        return
+    end
     list_response(uploaddir, true)
 end
 
@@ -330,11 +369,10 @@ function scandir(directory)
             table.insert(entries, entry)
         end
     end
-    dir:close()
     table.sort(entries)
     for _, name in ipairs(entries) do
         local fullpath = realpath .. "/" .. name
-        local stat = nixio.fs.stat(fullpath)
+        local stat = nixio.fs.lstat(fullpath)
         if stat then
             local filetype = stat.type
             local size = stat.size or 0
