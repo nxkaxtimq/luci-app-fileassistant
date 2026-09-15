@@ -34,12 +34,11 @@ String.prototype.replaceAll = function(search, replacement) {
 
   function installPath(filename, isdir) {
     if (isdir === "1") {
-      alert('这是一个目录，请选择 ipk 文件进行安装！');
+      alert('这是一个目录，请选择 apk 文件进行安装。');
       return;
     }
-    var isipk = isIPK(filename);
-    if (isipk === 0) {
-      alert('只允许安装 ipk 格式的文件！');
+    if (!isAPK(filename)) {
+      alert('只允许安装 apk 格式的文件。');
       return;
     }
     var c = confirm('你确定要安装 ' + filename + ' 吗？');
@@ -51,23 +50,33 @@ String.prototype.replaceAll = function(search, replacement) {
         },
         function (x, res) {
           if (res.ec === 0) {
+            alert('安装成功。');
             location.reload();
-            alert('安装成功!');
           } else {
-            alert('安装失败，请检查文件格式!');
+            var retry = confirm('安装失败。可能的原因之一，是安装包签名未被本路由器信任。\n\n是否跳过签名验证并重试？');
+            if (retry) {
+              iwxhr.get('/cgi-bin/luci/admin/nas/fileassistant/install_untrusted',
+                {
+                  filepath: concatPath(currentPath, filename),
+                  isdir: isdir
+                },
+                function (x2, res2) {
+                  if (res2.ec === 0) {
+                    alert('安装成功。');
+                    location.reload();
+                  } else {
+                    alert('安装失败，请检查安装包文件。');
+                  }
+              });
+            }
           }
       });
     }
   }
 
-  function isIPK(filename) {
-    var index= filename.lastIndexOf(".");
-    var ext = filename.substr(index+1);
-    if (ext === 'ipk') {
-      return 1;
-    } else {
-      return 0;
-    }
+  function isAPK(filename) {
+    var ext = filename.substr(filename.lastIndexOf('.') + 1).toLowerCase();
+    return ext === 'apk';
   }
 
   function renamePath(filename) {
@@ -179,7 +188,7 @@ String.prototype.replaceAll = function(search, replacement) {
 		  var install_btn = '<button class="cbi-button cbi-button-install" style="visibility: hidden;">安装</button>';
           var index= o.filename.lastIndexOf(".");
 		  var ext = o.filename.substr(index+1);
-          if (ext === 'ipk') {
+          if (ext === 'apk') {
             install_btn = '<button class="cbi-button cbi-button-install">安装</button>';
           }
 		  
@@ -263,7 +272,7 @@ String.prototype.replaceAll = function(search, replacement) {
           uploadinput.value = '';
         }
         else {
-          alert('上传失败，请稍后再试...');
+          alert('上传失败，请稍后再试。');
         }
       };
       xhr.send(formData);
