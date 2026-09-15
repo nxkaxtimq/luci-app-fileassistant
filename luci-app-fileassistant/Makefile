@@ -5,10 +5,17 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=LuCI support for Fileassistant
+LUCI_DEPENDS:=+luci-base
+PKG_LICENSE:=Apache-2.0
+PKG_LICENSE_FILES:=LICENSE
 LUCI_PKGARCH:=all
 PKG_VERSION:=1.0
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
+ifeq ($(wildcard $(TOPDIR)/feeds/luci/luci.mk),)
 include ../../luci.mk
+else
+include $(TOPDIR)/feeds/luci/luci.mk
+endif
 
 # call BuildPackage - OpenWrt buildroot signature
